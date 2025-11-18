@@ -25,15 +25,15 @@ app.use('/api', rateLimiter.general);
 app.get('/api/rules', async (req, res) => {
   try {
     const { page = 1, limit = 50, search = '', sortBy = 'rating' } = req.query;
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
     const skip = (pageNum - 1) * limitNum;
 
-    // Условие поиска
+    // Условие поиска (SQLite LIKE is case-insensitive by default)
     const searchCondition = search ? {
       OR: [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } }
+        { title: { contains: search } },
+        { description: { contains: search } }
       ]
     } : {};
 
@@ -50,7 +50,7 @@ app.get('/api/rules', async (req, res) => {
           select: { value: true }
         }
       },
-      orderBy: sortBy === 'date' ? { createdAt: 'desc' } : { createdAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       skip,
       take: limitNum
     });

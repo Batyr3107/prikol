@@ -1,10 +1,11 @@
 const API_URL = '/api';
 
-// Генерируем уникальный ID пользователя для веба
+// Генерируем уникальный числовой ID пользователя для веба
 let userId = localStorage.getItem('userId');
 if (!userId) {
-    userId = Date.now() + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('userId', userId);
+    // Генерируем большое число из timestamp и случайного числа
+    userId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    localStorage.setItem('userId', userId.toString());
 }
 
 // Валидация правила на клиенте

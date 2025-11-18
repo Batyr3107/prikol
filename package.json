@@ -5,13 +5,16 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:prod": "npx prisma migrate deploy && node src/server.js",
     "dev": "nodemon src/server.js",
     "bot": "node src/bot.js",
     "bot:dev": "nodemon src/bot.js",
+    "bot:prod": "npx prisma migrate deploy && node src/bot.js",
     "both": "node scripts/start-both.js",
     "setup": "node scripts/setup.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio"
   },
   "keywords": ["voting", "rules", "telegram-bot"],
