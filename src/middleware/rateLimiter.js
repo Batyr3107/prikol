@@ -1,0 +1,74 @@
+// Простой rate limiter без внешних зависимостей
+
+class RateLimiter {
+  constructor(windowMs = 60000, max = 100) {
+    this.windowMs = windowMs; // Временное окно в миллисекундах
+    this.max = max; // Максимум запросов в окне
+    this.clients = new Map();
+  }
+
+  // Очистка старых записей
+  cleanup() {
+    const now = Date.now();
+    for (const [key, data] of this.clients.entries()) {
+      if (now - data.resetTime > this.windowMs) {
+        this.clients.delete(key);
+      }
+    }
+  }
+
+  middleware() {
+    return (req, res, next) => {
+      // Получаем IP клиента
+      const key = req.ip || req.connection.remoteAddress;
+      const now = Date.now();
+
+      // Очищаем старые записи раз в минуту
+      if (Math.random() < 0.01) {
+        this.cleanup();
+      }
+
+      let clientData = this.clients.get(key);
+
+      if (!clientData || now - clientData.resetTime > this.windowMs) {
+        // Новое окно или первый запрос
+        clientData = {
+          count: 1,
+          resetTime: now
+        };
+        this.clients.set(key, clientData);
+        return next();
+      }
+
+      clientData.count++;
+
+      if (clientData.count > this.max) {
+        // Превышен лимит
+        const retryAfter = Math.ceil((this.windowMs - (now - clientData.resetTime)) / 1000);
+        res.set('Retry-After', retryAfter);
+        return res.status(429).json({
+          error: 'Слишком много запросов. Попробуйте позже.',
+          retryAfter
+        });
+      }
+
+      // Добавляем заголовки о лимитах
+      res.set('X-RateLimit-Limit', this.max);
+      res.set('X-RateLimit-Remaining', Math.max(0, this.max - clientData.count));
+      res.set('X-RateLimit-Reset', new Date(clientData.resetTime + this.windowMs).toISOString());
+
+      next();
+    };
+  }
+}
+
+// Создаем лимитеры для разных типов запросов
+const generalLimiter = new RateLimiter(60000, 100); // 100 запросов в минуту
+const createLimiter = new RateLimiter(60000, 10); // 10 создании правил в минуту
+const voteLimiter = new RateLimiter(60000, 50); // 50 голосов в минуту
+
+module.exports = {
+  general: generalLimiter.middleware(),
+  create: createLimiter.middleware(),
+  vote: voteLimiter.middleware()
+};

@@ -4,6 +4,8 @@ const cors = require('cors');
 const path = require('path');
 const prisma = require('./db');
 const { validateRule, validateVote, validateUserId, handleError } = require('./utils');
+const rateLimiter = require('./middleware/rateLimiter');
+const logger = require('./middleware/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,14 +13,35 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(logger.requestLogger());
 app.use(express.static(path.join(__dirname, '../public')));
+
+// Rate limiting для API
+app.use('/api', rateLimiter.general);
 
 // ============= API ENDPOINTS =============
 
-// Получить все правила с рейтингом
+// Получить все правила с рейтингом (с пагинацией и поиском)
 app.get('/api/rules', async (req, res) => {
   try {
+    const { page = 1, limit = 50, search = '', sortBy = 'rating' } = req.query;
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Условие поиска
+    const searchCondition = search ? {
+      OR: [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ]
+    } : {};
+
+    // Получаем общее количество
+    const total = await prisma.rule.count({ where: searchCondition });
+
     const rules = await prisma.rule.findMany({
+      where: searchCondition,
       include: {
         author: {
           select: { displayName: true, username: true }
@@ -27,7 +50,9 @@ app.get('/api/rules', async (req, res) => {
           select: { value: true }
         }
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: sortBy === 'date' ? { createdAt: 'desc' } : { createdAt: 'desc' },
+      skip,
+      take: limitNum
     });
 
     // Подсчитываем рейтинг для каждого правила
@@ -45,10 +70,20 @@ app.get('/api/rules', async (req, res) => {
       };
     });
 
-    // Сортируем по рейтингу
-    rulesWithRating.sort((a, b) => b.rating - a.rating);
+    // Сортируем по рейтингу если нужно
+    if (sortBy === 'rating') {
+      rulesWithRating.sort((a, b) => b.rating - a.rating);
+    }
 
-    res.json(rulesWithRating);
+    res.json({
+      rules: rulesWithRating,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum)
+      }
+    });
   } catch (error) {
     console.error('Error fetching rules:', error);
     res.status(500).json({ error: 'Ошибка при получении правил' });
@@ -93,7 +128,7 @@ app.get('/api/rules/:id', async (req, res) => {
 });
 
 // Создать новое правило
-app.post('/api/rules', async (req, res) => {
+app.post('/api/rules', rateLimiter.create, async (req, res) => {
   try {
     const { title, description, userId, userName } = req.body;
 
@@ -150,7 +185,7 @@ app.post('/api/rules', async (req, res) => {
 });
 
 // Проголосовать за правило
-app.post('/api/rules/:id/vote', async (req, res) => {
+app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
   try {
     const { id } = req.params;
     const { userId, value, userName } = req.body;
@@ -261,19 +296,79 @@ app.get('/api/rules/top/:limit', async (req, res) => {
   }
 });
 
+// Статистика
+app.get('/api/stats', async (req, res) => {
+  try {
+    const [
+      totalRules,
+      totalUsers,
+      totalVotes,
+      rulesWithVotes
+    ] = await Promise.all([
+      prisma.rule.count(),
+      prisma.user.count(),
+      prisma.vote.count(),
+      prisma.rule.findMany({
+        include: {
+          votes: {
+            select: { value: true }
+          }
+        }
+      })
+    ]);
+
+    // Подсчитываем статистику голосов
+    let positiveVotes = 0;
+    let negativeVotes = 0;
+    let topRating = 0;
+    let topRule = null;
+
+    rulesWithVotes.forEach(rule => {
+      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
+      positiveVotes += rule.votes.filter(v => v.value === 1).length;
+      negativeVotes += rule.votes.filter(v => v.value === -1).length;
+
+      if (rating > topRating) {
+        topRating = rating;
+        topRule = {
+          id: rule.id,
+          title: rule.title,
+          rating
+        };
+      }
+    });
+
+    res.json({
+      totalRules,
+      totalUsers,
+      totalVotes,
+      positiveVotes,
+      negativeVotes,
+      topRule,
+      avgVotesPerRule: totalRules > 0 ? (totalVotes / totalRules).toFixed(2) : 0
+    });
+  } catch (error) {
+    logger.error('Error fetching stats:', error);
+    res.status(500).json({ error: 'Ошибка при получении статистики' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Запуск сервера
 app.listen(PORT, () => {
-  console.log(`🚀 Сервер запущен на http://localhost:${PORT}`);
-  console.log(`📊 API доступен на http://localhost:${PORT}/api`);
+  logger.success(`🚀 Сервер запущен на http://localhost:${PORT}`);
+  logger.info(`📊 API доступен на http://localhost:${PORT}/api`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
+  logger.info('Получен сигнал SIGINT, завершаем работу...');
   await prisma.$disconnect();
+  logger.success('Соединение с БД закрыто');
   process.exit(0);
 });

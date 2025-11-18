@@ -23,12 +23,17 @@
         <div id="all-tab" class="tab-content active">
             <div class="rules-header">
                 <h2>Все правила</h2>
-                <div class="sort-controls">
-                    <label>Сортировка:</label>
-                    <select id="sort-select">
-                        <option value="rating">По рейтингу</option>
-                        <option value="date">По дате</option>
-                    </select>
+                <div class="controls">
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="🔍 Поиск правил...">
+                    </div>
+                    <div class="sort-controls">
+                        <label>Сортировка:</label>
+                        <select id="sort-select">
+                            <option value="rating">По рейтингу</option>
+                            <option value="date">По дате</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             <div id="rules-list" class="rules-list">

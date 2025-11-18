@@ -49,29 +49,56 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
 });
 
+// Debounce функция для поиска
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Поиск
+const searchInput = document.getElementById('search-input');
+const debouncedSearch = debounce((searchQuery, sortBy) => {
+    loadAllRules(sortBy, searchQuery);
+}, 300);
+
+searchInput.addEventListener('input', (e) => {
+    const sortBy = document.getElementById('sort-select').value;
+    debouncedSearch(e.target.value, sortBy);
+});
+
 // Сортировка
 document.getElementById('sort-select').addEventListener('change', (e) => {
-    loadAllRules(e.target.value);
+    const searchQuery = document.getElementById('search-input').value;
+    loadAllRules(e.target.value, searchQuery);
 });
 
 // Загрузка всех правил
-async function loadAllRules(sortBy = 'rating') {
+async function loadAllRules(sortBy = 'rating', searchQuery = '') {
     const rulesList = document.getElementById('rules-list');
     rulesList.innerHTML = '<div class="loading">Загрузка...</div>';
 
     try {
-        const response = await fetch(`${API_URL}/rules`);
-        let rules = await response.json();
+        const params = new URLSearchParams({
+            sortBy,
+            limit: 100,
+            ...(searchQuery && { search: searchQuery })
+        });
 
-        // Сортировка
-        if (sortBy === 'rating') {
-            rules.sort((a, b) => b.rating - a.rating);
-        } else if (sortBy === 'date') {
-            rules.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        }
+        const response = await fetch(`${API_URL}/rules?${params}`);
+        const data = await response.json();
+        const rules = data.rules || data; // Обратная совместимость
 
         if (rules.length === 0) {
-            rulesList.innerHTML = '<p class="loading">Пока нет правил. Создайте первое!</p>';
+            rulesList.innerHTML = searchQuery
+                ? '<p class="loading">Ничего не найдено. Попробуйте другой запрос.</p>'
+                : '<p class="loading">Пока нет правил. Создайте первое!</p>';
             return;
         }
 
