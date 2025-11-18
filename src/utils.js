@@ -1,26 +1,47 @@
 // Утилиты для приложения
 
 /**
+ * Санитизация текста - удаляет опасные символы
+ */
+function sanitizeText(text) {
+  if (!text || typeof text !== 'string') return '';
+
+  // Удаляем null bytes и другие опасные символы
+  return text
+    .replace(/\0/g, '') // Null bytes
+    .replace(/[\x00-\x1F\x7F]/g, '') // Control characters
+    .trim();
+}
+
+/**
  * Валидация правила
  */
 function validateRule(title, description) {
   const errors = [];
 
-  if (!title || typeof title !== 'string') {
+  // Санитизируем входные данные
+  const cleanTitle = sanitizeText(title);
+  const cleanDescription = sanitizeText(description);
+
+  if (!cleanTitle) {
     errors.push('Название правила обязательно');
-  } else if (title.trim().length < 3) {
+  } else if (cleanTitle.length < 3) {
     errors.push('Название правила должно быть не менее 3 символов');
-  } else if (title.length > 200) {
+  } else if (cleanTitle.length > 200) {
     errors.push('Название правила не должно превышать 200 символов');
   }
 
-  if (description && typeof description === 'string' && description.length > 1000) {
+  if (cleanDescription && cleanDescription.length > 1000) {
     errors.push('Описание не должно превышать 1000 символов');
   }
 
   return {
     isValid: errors.length === 0,
-    errors
+    errors,
+    sanitized: {
+      title: cleanTitle,
+      description: cleanDescription
+    }
   };
 }
 
@@ -73,6 +94,7 @@ function handleError(error, context = 'Operation') {
 }
 
 module.exports = {
+  sanitizeText,
   validateRule,
   validateVote,
   validateUserId,

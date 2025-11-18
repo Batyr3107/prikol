@@ -287,12 +287,17 @@ async function sendRuleMessage(chatId, rule, rating, position = null) {
   const ratingEmoji = rating > 0 ? '🔥' : rating < 0 ? '❄️' : '⚖️';
   const positionText = position ? `${position}. ` : '';
 
+  // Экранируем пользовательский контент
+  const safeTitle = escapeHtml(rule.title);
+  const safeDescription = escapeHtml(rule.description);
+  const safeAuthor = escapeHtml(rule.author.displayName || rule.author.username || 'Аноним');
+
   const message = `
-${positionText}${ratingEmoji} <b>${rule.title}</b>
+${positionText}${ratingEmoji} <b>${safeTitle}</b>
 
-${rule.description ? rule.description : '<i>Без описания</i>'}
+${rule.description ? safeDescription : '<i>Без описания</i>'}
 
-👤 Автор: ${rule.author.displayName || rule.author.username || 'Аноним'}
+👤 Автор: ${safeAuthor}
 📊 Рейтинг: ${rating} (${rule.votes?.length || 0} голосов)
   `.trim();
 
@@ -315,12 +320,17 @@ ${rule.description ? rule.description : '<i>Без описания</i>'}
 async function updateRuleMessage(message, rule, rating) {
   const ratingEmoji = rating > 0 ? '🔥' : rating < 0 ? '❄️' : '⚖️';
 
+  // Экранируем пользовательский контент
+  const safeTitle = escapeHtml(rule.title);
+  const safeDescription = escapeHtml(rule.description);
+  const safeAuthor = escapeHtml(rule.author.displayName || rule.author.username || 'Аноним');
+
   const newMessage = `
-${ratingEmoji} <b>${rule.title}</b>
+${ratingEmoji} <b>${safeTitle}</b>
 
-${rule.description ? rule.description : '<i>Без описания</i>'}
+${rule.description ? safeDescription : '<i>Без описания</i>'}
 
-👤 Автор: ${rule.author.displayName || rule.author.username || 'Аноним'}
+👤 Автор: ${safeAuthor}
 📊 Рейтинг: ${rating} (${rule.votes.length} голосов)
   `.trim();
 
@@ -345,6 +355,15 @@ ${rule.description ? rule.description : '<i>Без описания</i>'}
 function countVotes(votes, value) {
   if (!votes) return 0;
   return votes.filter(v => v.value === value).length;
+}
+
+// Экранирование HTML для Telegram
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // Graceful shutdown

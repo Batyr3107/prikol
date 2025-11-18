@@ -11,8 +11,24 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors()); // В production рекомендуется ограничить: cors({ origin: ['https://yourdomain.com'] })
+app.use(express.json({ limit: '1mb' })); // Защита от слишком больших запросов (DoS)
+
+// Security headers
+app.use((req, res, next) => {
+  // Content Security Policy
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+  // Предотвращает MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Защита от clickjacking
+  res.setHeader('X-Frame-Options', 'DENY');
+  // XSS Protection (устаревший, но всё равно полезный)
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Referrer Policy
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 app.use(logger.requestLogger());
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -142,6 +158,9 @@ app.post('/api/rules', rateLimiter.create, async (req, res) => {
       return res.status(400).json({ error: validation.errors.join(', ') });
     }
 
+    // Используем санитизированные данные
+    const { title: safeTitle, description: safeDescription } = validation.sanitized;
+
     // Найти или создать пользователя
     let user = await prisma.user.findFirst({
       where: { id: parseInt(userId) }
@@ -158,8 +177,8 @@ app.post('/api/rules', rateLimiter.create, async (req, res) => {
 
     const rule = await prisma.rule.create({
       data: {
-        title,
-        description: description || '',
+        title: safeTitle,
+        description: safeDescription || '',
         authorId: user.id
       },
       include: {
@@ -356,6 +375,28 @@ app.get('/api/stats', async (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Endpoint ${req.method} ${req.path} не найден`
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  logger.error('Unhandled error:', err);
+
+  // Не показываем детали ошибки в production
+  const isDev = process.env.NODE_ENV === 'development';
+
+  res.status(err.status || 500).json({
+    error: 'Internal Server Error',
+    message: isDev ? err.message : 'Произошла ошибка на сервере',
+    ...(isDev && { stack: err.stack })
+  });
 });
 
 // Запуск сервера

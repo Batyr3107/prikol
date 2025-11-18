@@ -8,6 +8,17 @@ if (!userId) {
     localStorage.setItem('userId', userId.toString());
 }
 
+// Экранирование HTML для защиты от XSS
+function escapeHtml(unsafe) {
+    if (!unsafe) return '';
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 // Валидация правила на клиенте
 function validateRuleClient(title, description) {
     const errors = [];
@@ -141,19 +152,24 @@ function createRuleCard(rule, position = null) {
     const ratingEmoji = rule.rating > 0 ? '🔥' : rule.rating < 0 ? '❄️' : '⚖️';
     const positionBadge = position ? `<span class="top-position">${position}</span>` : '';
 
+    // Экранируем пользовательский контент для защиты от XSS
+    const safeTitle = escapeHtml(rule.title);
+    const safeDescription = escapeHtml(rule.description);
+    const safeAuthor = escapeHtml(rule.author);
+
     return `
         <div class="rule-card" data-rule-id="${rule.id}">
             <div class="rule-header">
                 <div class="rule-title">
-                    ${positionBadge}${rule.title}
+                    ${positionBadge}${safeTitle}
                 </div>
                 <div class="rule-rating ${ratingClass}">
                     ${ratingEmoji} ${rule.rating}
                 </div>
             </div>
-            ${rule.description ? `<div class="rule-description">${rule.description}</div>` : ''}
+            ${rule.description ? `<div class="rule-description">${safeDescription}</div>` : ''}
             <div class="rule-meta">
-                <span>👤 ${rule.author}</span>
+                <span>👤 ${safeAuthor}</span>
                 <span>📊 ${rule.votesCount} голосов</span>
             </div>
             <div class="vote-buttons">
