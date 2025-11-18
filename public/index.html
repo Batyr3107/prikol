@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Свод Мужских Правил</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📜 Свод Мужских Правил</h1>
+            <p class="subtitle">Создаём универсальные правила вместе</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="all">Все правила</button>
+            <button class="tab-btn" data-tab="top">Топ-10</button>
+            <button class="tab-btn" data-tab="create">Создать правило</button>
+        </div>
+
+        <!-- Вкладка: Все правила -->
+        <div id="all-tab" class="tab-content active">
+            <div class="rules-header">
+                <h2>Все правила</h2>
+                <div class="sort-controls">
+                    <label>Сортировка:</label>
+                    <select id="sort-select">
+                        <option value="rating">По рейтингу</option>
+                        <option value="date">По дате</option>
+                    </select>
+                </div>
+            </div>
+            <div id="rules-list" class="rules-list">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Вкладка: Топ-10 -->
+        <div id="top-tab" class="tab-content">
+            <h2>🏆 Топ-10 универсальных правил</h2>
+            <div id="top-rules-list" class="rules-list">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Вкладка: Создать правило -->
+        <div id="create-tab" class="tab-content">
+            <h2>Создать новое правило</h2>
+            <form id="create-rule-form" class="create-form">
+                <div class="form-group">
+                    <label for="user-name">Ваше имя:</label>
+                    <input type="text" id="user-name" required placeholder="Введите ваше имя">
+                </div>
+                <div class="form-group">
+                    <label for="rule-title">Название правила:</label>
+                    <input type="text" id="rule-title" required placeholder="Краткое название правила">
+                </div>
+                <div class="form-group">
+                    <label for="rule-description">Описание (необязательно):</label>
+                    <textarea id="rule-description" rows="4" placeholder="Подробное описание правила"></textarea>
+                </div>
+                <button type="submit" class="btn-primary">Создать правило</button>
+            </form>
+            <div id="create-message" class="message"></div>
+        </div>
+
+        <footer>
+            <p>Также доступен <a href="#telegram">Telegram бот</a> для голосования!</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
