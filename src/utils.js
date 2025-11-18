@@ -84,9 +84,14 @@ function getRatingEmoji(rating) {
 
 /**
  * Безопасная обработка ошибки
+ * Примечание: Эта функция не экспортирована и не используется в текущем коде
+ * Оставлена для будущего использования
  */
 function handleError(error, context = 'Operation') {
-  console.error(`[${context}] Error:`, error);
+  // В будущем можно добавить import logger и использовать его
+  if (process.env.NODE_ENV === 'development') {
+    console.error(`[${context}] Error:`, error);
+  }
   return {
     error: 'Произошла ошибка',
     message: process.env.NODE_ENV === 'development' ? error.message : undefined

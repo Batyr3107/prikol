@@ -28,7 +28,7 @@ class RateLimiter {
   middleware() {
     return (req, res, next) => {
       // Получаем IP клиента
-      const key = req.ip || req.connection.remoteAddress;
+      const key = req.ip || req.connection.remoteAddress || 'unknown';
       const now = Date.now();
 
       let clientData = this.clients.get(key);

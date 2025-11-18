@@ -101,7 +101,7 @@ app.get('/api/rules', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching rules:', error);
+    logger.error('Error fetching rules:', error);
     res.status(500).json({ error: 'Ошибка при получении правил' });
   }
 });
@@ -109,7 +109,7 @@ app.get('/api/rules', async (req, res) => {
 // Получить топ правила (ПЕРЕД /:id чтобы не конфликтовать!)
 app.get('/api/rules/top/:limit', async (req, res) => {
   try {
-    const limit = parseInt(req.params.limit) || 10;
+    const limit = Math.min(100, Math.max(1, parseInt(req.params.limit) || 10));
 
     const rules = await prisma.rule.findMany({
       include: {
@@ -139,7 +139,7 @@ app.get('/api/rules/top/:limit', async (req, res) => {
 
     res.json(rulesWithRating.slice(0, limit));
   } catch (error) {
-    console.error('Error fetching top rules:', error);
+    logger.error('Error fetching top rules:', error);
     res.status(500).json({ error: 'Ошибка при получении топ правил' });
   }
 });
@@ -176,7 +176,7 @@ app.get('/api/rules/:id', async (req, res) => {
       votesCount: rule.votes.length
     });
   } catch (error) {
-    console.error('Error fetching rule:', error);
+    logger.error('Error fetching rule:', error);
     res.status(500).json({ error: 'Ошибка при получении правила' });
   }
 });
@@ -236,7 +236,7 @@ app.post('/api/rules', rateLimiter.create, async (req, res) => {
       votesCount: 0
     });
   } catch (error) {
-    console.error('Error creating rule:', error);
+    logger.error('Error creating rule:', error);
     res.status(500).json({ error: 'Ошибка при создании правила' });
   }
 });
@@ -310,7 +310,7 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
       votesCount: votes.length
     });
   } catch (error) {
-    console.error('Error voting:', error);
+    logger.error('Error voting:', error);
     res.status(500).json({ error: 'Ошибка при голосовании' });
   }
 });

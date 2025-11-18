@@ -175,7 +175,12 @@ bot.on('message', async (msg) => {
 
   try {
     if (state.step === 'waiting_title') {
-      // Сохраняем название
+      // Сохраняем название с базовой валидацией
+      if (text.length > 200) {
+        bot.sendMessage(chatId, '❌ Название слишком длинное (максимум 200 символов). Попробуйте снова с /new');
+        delete userState[userId];
+        return;
+      }
       state.title = text;
       state.step = 'waiting_description';
       bot.sendMessage(chatId, '✍️ Отлично! Теперь введите описание правила (или /skip чтобы пропустить):');
@@ -195,6 +200,12 @@ bot.on('message', async (msg) => {
       const user = await prisma.user.findUnique({
         where: { telegramId: userId.toString() }
       });
+
+      if (!user) {
+        bot.sendMessage(chatId, '❌ Ошибка: пользователь не найден. Отправьте /start для регистрации.');
+        delete userState[userId];
+        return;
+      }
 
       // Создаем правило с санитизированными данными
       const rule = await prisma.rule.create({
