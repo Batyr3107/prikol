@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const prisma = require('./db');
-const { validateRule, validateVote, validateUserId, handleError } = require('./utils');
+const { sanitizeText, validateRule, validateVote, validateUserId, handleError } = require('./utils');
 const rateLimiter = require('./middleware/rateLimiter');
 const logger = require('./middleware/logger');
 
@@ -106,6 +106,44 @@ app.get('/api/rules', async (req, res) => {
   }
 });
 
+// Получить топ правила (ПЕРЕД /:id чтобы не конфликтовать!)
+app.get('/api/rules/top/:limit', async (req, res) => {
+  try {
+    const limit = parseInt(req.params.limit) || 10;
+
+    const rules = await prisma.rule.findMany({
+      include: {
+        author: {
+          select: { displayName: true, username: true }
+        },
+        votes: {
+          select: { value: true }
+        }
+      }
+    });
+
+    const rulesWithRating = rules.map(rule => {
+      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
+      return {
+        id: rule.id,
+        title: rule.title,
+        description: rule.description,
+        author: rule.author.displayName || rule.author.username || 'Аноним',
+        createdAt: rule.createdAt,
+        rating,
+        votesCount: rule.votes.length
+      };
+    });
+
+    rulesWithRating.sort((a, b) => b.rating - a.rating);
+
+    res.json(rulesWithRating.slice(0, limit));
+  } catch (error) {
+    console.error('Error fetching top rules:', error);
+    res.status(500).json({ error: 'Ошибка при получении топ правил' });
+  }
+});
+
 // Получить одно правило
 app.get('/api/rules/:id', async (req, res) => {
   try {
@@ -170,7 +208,7 @@ app.post('/api/rules', rateLimiter.create, async (req, res) => {
       user = await prisma.user.create({
         data: {
           id: parseInt(userId),
-          displayName: userName || 'Аноним'
+          displayName: sanitizeText(userName) || 'Аноним'
         }
       });
     }
@@ -227,7 +265,7 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
       user = await prisma.user.create({
         data: {
           id: parseInt(userId),
-          displayName: userName || 'Аноним'
+          displayName: sanitizeText(userName) || 'Аноним'
         }
       });
     }
@@ -274,44 +312,6 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
   } catch (error) {
     console.error('Error voting:', error);
     res.status(500).json({ error: 'Ошибка при голосовании' });
-  }
-});
-
-// Получить топ правила
-app.get('/api/rules/top/:limit', async (req, res) => {
-  try {
-    const limit = parseInt(req.params.limit) || 10;
-
-    const rules = await prisma.rule.findMany({
-      include: {
-        author: {
-          select: { displayName: true, username: true }
-        },
-        votes: {
-          select: { value: true }
-        }
-      }
-    });
-
-    const rulesWithRating = rules.map(rule => {
-      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
-      return {
-        id: rule.id,
-        title: rule.title,
-        description: rule.description,
-        author: rule.author.displayName || rule.author.username || 'Аноним',
-        createdAt: rule.createdAt,
-        rating,
-        votesCount: rule.votes.length
-      };
-    });
-
-    rulesWithRating.sort((a, b) => b.rating - a.rating);
-
-    res.json(rulesWithRating.slice(0, limit));
-  } catch (error) {
-    console.error('Error fetching top rules:', error);
-    res.status(500).json({ error: 'Ошибка при получении топ правил' });
   }
 });
 

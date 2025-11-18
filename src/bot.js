@@ -1,11 +1,13 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const prisma = require('./db');
+const { sanitizeText, validateRule } = require('./utils');
+const logger = require('./middleware/logger');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
 if (!token) {
-  console.error('❌ TELEGRAM_BOT_TOKEN не установлен в .env файле');
+  logger.error('❌ TELEGRAM_BOT_TOKEN не установлен в .env файле');
   process.exit(1);
 }
 
@@ -14,24 +16,24 @@ const bot = new TelegramBot(token, { polling: true });
 // Хранилище для процесса создания правила
 const userState = {};
 
-console.log('🤖 Telegram бот запущен!');
+logger.success('🤖 Telegram бот запущен!');
 
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  const userName = msg.from.first_name || msg.from.username;
+  const userName = sanitizeText(msg.from.first_name || msg.from.username);
 
   // Создаем или обновляем пользователя
   await prisma.user.upsert({
     where: { telegramId: userId.toString() },
     update: {
-      username: msg.from.username,
+      username: sanitizeText(msg.from.username),
       displayName: userName
     },
     create: {
       telegramId: userId.toString(),
-      username: msg.from.username,
+      username: sanitizeText(msg.from.username),
       displayName: userName
     }
   });
@@ -116,7 +118,7 @@ bot.onText(/\/list/, async (msg) => {
       await sendRuleMessage(chatId, rule, rating);
     }
   } catch (error) {
-    console.error('Error fetching rules:', error);
+    logger.error('Error fetching rules:', error);
     bot.sendMessage(chatId, '❌ Ошибка при получении правил');
   }
 });
@@ -149,11 +151,12 @@ bot.onText(/\/top/, async (msg) => {
 
     bot.sendMessage(chatId, '🏆 Топ 10 универсальных правил:\n');
 
-    topRules.forEach(async (rule, index) => {
-      await sendRuleMessage(chatId, rule, rule.rating, index + 1);
-    });
+    // Используем for...of вместо forEach для правильной обработки async
+    for (let index = 0; index < topRules.length; index++) {
+      await sendRuleMessage(chatId, topRules[index], topRules[index].rating, index + 1);
+    }
   } catch (error) {
-    console.error('Error fetching top rules:', error);
+    logger.error('Error fetching top rules:', error);
     bot.sendMessage(chatId, '❌ Ошибка при получении топ правил');
   }
 });
@@ -180,16 +183,24 @@ bot.on('message', async (msg) => {
       // Сохраняем описание
       const description = text === '/skip' ? '' : text;
 
+      // Валидация правила
+      const validation = validateRule(state.title, description);
+      if (!validation.isValid) {
+        bot.sendMessage(chatId, `❌ Ошибка: ${validation.errors.join(', ')}\n\nПопробуйте снова с /new`);
+        delete userState[userId];
+        return;
+      }
+
       // Находим пользователя
       const user = await prisma.user.findUnique({
         where: { telegramId: userId.toString() }
       });
 
-      // Создаем правило
+      // Создаем правило с санитизированными данными
       const rule = await prisma.rule.create({
         data: {
-          title: state.title,
-          description: description,
+          title: validation.sanitized.title,
+          description: validation.sanitized.description,
           authorId: user.id
         },
         include: {
@@ -203,7 +214,7 @@ bot.on('message', async (msg) => {
       await sendRuleMessage(chatId, rule, 0);
     }
   } catch (error) {
-    console.error('Error creating rule:', error);
+    logger.error('Error creating rule:', error);
     bot.sendMessage(chatId, '❌ Ошибка при создании правила');
     delete userState[userId];
   }
@@ -277,7 +288,7 @@ bot.on('callback_query', async (query) => {
       bot.answerCallbackQuery(query.id, { text: `${emoji} Ваш голос учтен!` });
     }
   } catch (error) {
-    console.error('Error processing vote:', error);
+    logger.error('Error processing vote:', error);
     bot.answerCallbackQuery(query.id, { text: '❌ Ошибка при голосовании' });
   }
 });
@@ -368,8 +379,9 @@ function escapeHtml(text) {
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Остановка бота...');
+  logger.info('\n🛑 Остановка бота...');
   await bot.stopPolling();
   await prisma.$disconnect();
+  logger.success('Бот остановлен');
   process.exit(0);
 });

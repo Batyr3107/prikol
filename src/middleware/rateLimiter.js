@@ -5,15 +5,23 @@ class RateLimiter {
     this.windowMs = windowMs; // Временное окно в миллисекундах
     this.max = max; // Максимум запросов в окне
     this.clients = new Map();
+
+    // Автоматическая очистка каждые 5 минут
+    this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
   }
 
   // Очистка старых записей
   cleanup() {
     const now = Date.now();
+    let cleaned = 0;
     for (const [key, data] of this.clients.entries()) {
       if (now - data.resetTime > this.windowMs) {
         this.clients.delete(key);
+        cleaned++;
       }
+    }
+    if (cleaned > 0 && process.env.NODE_ENV === 'development') {
+      console.log(`[RateLimiter] Cleaned ${cleaned} expired entries`);
     }
   }
 
@@ -22,11 +30,6 @@ class RateLimiter {
       // Получаем IP клиента
       const key = req.ip || req.connection.remoteAddress;
       const now = Date.now();
-
-      // Очищаем старые записи раз в минуту
-      if (Math.random() < 0.01) {
-        this.cleanup();
-      }
 
       let clientData = this.clients.get(key);
 

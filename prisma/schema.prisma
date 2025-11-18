@@ -10,8 +10,9 @@ datasource db {
 }
 
 // Пользователь (может быть из Telegram или веб)
+// ID управляются вручную (генерируются в app.js), поэтому autoincrement убран
 model User {
-  id            Int      @id @default(autoincrement())
+  id            Int      @id
   telegramId    String?  @unique
   username      String?
   displayName   String?

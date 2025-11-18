@@ -30,7 +30,3 @@ services:
     command: npm run bot
     depends_on:
       - web
-
-volumes:
-  data:
-  logs:
