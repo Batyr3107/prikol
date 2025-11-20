@@ -1,4 +1,5 @@
 // Простой rate limiter без внешних зависимостей
+const logger = require('./logger');
 
 class RateLimiter {
   constructor(windowMs = 60000, max = 100) {
@@ -21,7 +22,7 @@ class RateLimiter {
       }
     }
     if (cleaned > 0 && process.env.NODE_ENV === 'development') {
-      console.log(`[RateLimiter] Cleaned ${cleaned} expired entries`);
+      logger.info(`[RateLimiter] Cleaned ${cleaned} expired entries`);
     }
   }
 

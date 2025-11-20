@@ -8,7 +8,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const prisma = require('./db');
-const { sanitizeText, validateRule, validateVote, validateUserId, handleError } = require('./utils');
+const { sanitizeText, validateRule, validateVote, validateUserId } = require('./utils');
 const rateLimiter = require('./middleware/rateLimiter');
 const logger = require('./middleware/logger');
 
