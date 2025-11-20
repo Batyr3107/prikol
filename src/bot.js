@@ -1,15 +1,16 @@
 require('dotenv').config();
+
+// Валидация environment переменных
+const { validateEnv, validateTelegramToken } = require('./validateEnv');
+validateEnv();
+
 const TelegramBot = require('node-telegram-bot-api');
 const prisma = require('./db');
 const { sanitizeText, validateRule } = require('./utils');
 const logger = require('./middleware/logger');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
-
-if (!token) {
-  logger.error('❌ TELEGRAM_BOT_TOKEN не установлен в .env файле');
-  process.exit(1);
-}
+validateTelegramToken(token);
 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -242,65 +243,74 @@ bot.on('callback_query', async (query) => {
     const [action, ruleId, value] = data.split('_');
 
     if (action === 'vote') {
-      // Находим пользователя
-      const user = await prisma.user.findUnique({
-        where: { telegramId: userId.toString() }
-      });
+      // Используем транзакцию для атомарности
+      const { rating, rule } = await prisma.$transaction(async (tx) => {
+        // Находим пользователя
+        const user = await tx.user.findUnique({
+          where: { telegramId: userId.toString() }
+        });
 
-      if (!user) {
-        bot.answerCallbackQuery(query.id, { text: '❌ Пользователь не найден' });
-        return;
-      }
-
-      const voteValue = parseInt(value);
-
-      // Проверяем существующий голос
-      const existingVote = await prisma.vote.findUnique({
-        where: {
-          ruleId_userId: {
-            ruleId: parseInt(ruleId),
-            userId: user.id
-          }
+        if (!user) {
+          throw new Error('USER_NOT_FOUND');
         }
-      });
 
-      if (existingVote) {
-        // Обновляем голос
-        await prisma.vote.update({
-          where: { id: existingVote.id },
-          data: { value: voteValue }
-        });
-      } else {
-        // Создаем новый голос
-        await prisma.vote.create({
-          data: {
-            ruleId: parseInt(ruleId),
-            userId: user.id,
-            value: voteValue
+        const voteValue = parseInt(value);
+
+        // Проверяем существующий голос
+        const existingVote = await tx.vote.findUnique({
+          where: {
+            ruleId_userId: {
+              ruleId: parseInt(ruleId),
+              userId: user.id
+            }
           }
         });
-      }
 
-      // Получаем обновленный рейтинг
-      const votes = await prisma.vote.findMany({
-        where: { ruleId: parseInt(ruleId) }
+        if (existingVote) {
+          // Обновляем голос
+          await tx.vote.update({
+            where: { id: existingVote.id },
+            data: { value: voteValue }
+          });
+        } else {
+          // Создаем новый голос
+          await tx.vote.create({
+            data: {
+              ruleId: parseInt(ruleId),
+              userId: user.id,
+              value: voteValue
+            }
+          });
+        }
+
+        // Получаем обновленный рейтинг
+        const votes = await tx.vote.findMany({
+          where: { ruleId: parseInt(ruleId) }
+        });
+        const rating = votes.reduce((sum, v) => sum + v.value, 0);
+
+        // Получаем правило для обновления сообщения
+        const rule = await tx.rule.findUnique({
+          where: { id: parseInt(ruleId) },
+          include: { author: true, votes: true }
+        });
+
+        return { rating, rule, voteValue };
       });
-      const rating = votes.reduce((sum, v) => sum + v.value, 0);
 
       // Обновляем сообщение
-      const rule = await prisma.rule.findUnique({
-        where: { id: parseInt(ruleId) },
-        include: { author: true, votes: true }
-      });
-
       await updateRuleMessage(query.message, rule, rating);
 
-      const emoji = voteValue === 1 ? '👍' : '👎';
+      const emoji = value === '1' ? '👍' : '👎';
       bot.answerCallbackQuery(query.id, { text: `${emoji} Ваш голос учтен!` });
     }
   } catch (error) {
-    logger.error('Error processing vote:', error);
-    bot.answerCallbackQuery(query.id, { text: '❌ Ошибка при голосовании' });
+    if (error.message === 'USER_NOT_FOUND') {
+      bot.answerCallbackQuery(query.id, { text: '❌ Пользователь не найден. Отправьте /start' });
+    } else {
+      logger.error('Error processing vote:', error);
+      bot.answerCallbackQuery(query.id, { text: '❌ Ошибка при голосовании' });
+    }
   }
 });
 

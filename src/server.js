@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+// Валидация environment переменных перед запуском
+const { validateEnv, printConfig } = require('./validateEnv');
+validateEnv();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -256,59 +261,64 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
       return res.status(400).json({ error: 'Значение голоса должно быть 1 или -1' });
     }
 
-    // Найти или создать пользователя
-    let user = await prisma.user.findFirst({
-      where: { id: parseInt(userId) }
-    });
-
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          id: parseInt(userId),
-          displayName: sanitizeText(userName) || 'Аноним'
-        }
+    // Используем транзакцию для атомарности операции
+    const result = await prisma.$transaction(async (tx) => {
+      // Найти или создать пользователя
+      let user = await tx.user.findFirst({
+        where: { id: parseInt(userId) }
       });
-    }
 
-    // Проверяем, существует ли уже голос
-    const existingVote = await prisma.vote.findUnique({
-      where: {
-        ruleId_userId: {
-          ruleId: parseInt(id),
-          userId: user.id
-        }
+      if (!user) {
+        user = await tx.user.create({
+          data: {
+            id: parseInt(userId),
+            displayName: sanitizeText(userName) || 'Аноним'
+          }
+        });
       }
-    });
 
-    let vote;
-    if (existingVote) {
-      // Обновляем существующий голос
-      vote = await prisma.vote.update({
-        where: { id: existingVote.id },
-        data: { value: parseInt(value) }
-      });
-    } else {
-      // Создаем новый голос
-      vote = await prisma.vote.create({
-        data: {
-          ruleId: parseInt(id),
-          userId: user.id,
-          value: parseInt(value)
+      // Проверяем, существует ли уже голос
+      const existingVote = await tx.vote.findUnique({
+        where: {
+          ruleId_userId: {
+            ruleId: parseInt(id),
+            userId: user.id
+          }
         }
       });
-    }
 
-    // Получаем обновленный рейтинг
-    const votes = await prisma.vote.findMany({
-      where: { ruleId: parseInt(id) }
-    });
-    const rating = votes.reduce((sum, v) => sum + v.value, 0);
+      let vote;
+      if (existingVote) {
+        // Обновляем существующий голос
+        vote = await tx.vote.update({
+          where: { id: existingVote.id },
+          data: { value: parseInt(value) }
+        });
+      } else {
+        // Создаем новый голос
+        vote = await tx.vote.create({
+          data: {
+            ruleId: parseInt(id),
+            userId: user.id,
+            value: parseInt(value)
+          }
+        });
+      }
 
-    res.json({
-      success: true,
-      rating,
-      votesCount: votes.length
+      // Получаем обновленный рейтинг
+      const votes = await tx.vote.findMany({
+        where: { ruleId: parseInt(id) }
+      });
+      const rating = votes.reduce((sum, v) => sum + v.value, 0);
+
+      return {
+        success: true,
+        rating,
+        votesCount: votes.length
+      };
     });
+
+    res.json(result);
   } catch (error) {
     logger.error('Error voting:', error);
     res.status(500).json({ error: 'Ошибка при голосовании' });
@@ -403,7 +413,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   logger.success(`🚀 Сервер запущен на http://localhost:${PORT}`);
   logger.info(`📊 API доступен на http://localhost:${PORT}/api`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  printConfig();
 });
 
 // Graceful shutdown
