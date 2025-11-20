@@ -1,6 +1,9 @@
 # Используем официальный Node.js образ
 FROM node:18-alpine
 
+# Устанавливаем wget и curl для health checks
+RUN apk add --no-cache wget curl
+
 # Устанавливаем рабочую директорию
 WORKDIR /app
 

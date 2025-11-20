@@ -36,15 +36,13 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Run npm audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --production
         continue-on-error: true
 
       - name: Check for secrets
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: main
-          head: HEAD
 
   # Build Docker images
   build:
@@ -63,11 +61,27 @@ jobs:
         run: |
           docker run -d --name test-container \
             -e NODE_ENV=production \
-            -e DATABASE_URL=file:/app/data/test.db \
+            -e DATABASE_URL=file:/app/test.db \
             prikol:${{ github.sha }} npm start
-          sleep 10
-          docker logs test-container
+
+          # Ждем запуска
+          sleep 15
+
+          # Проверяем логи на ошибки
+          if docker logs test-container 2>&1 | grep -i "error"; then
+            echo "Errors found in logs"
+            docker logs test-container
+            docker stop test-container
+            docker rm test-container
+            exit 1
+          fi
+
+          # Проверяем health endpoint
+          docker exec test-container wget -q -O- http://localhost:3000/api/health || exit 1
+
+          # Очистка
           docker stop test-container
+          docker rm test-container
 
   # Deploy на production (только для main branch)
   deploy:

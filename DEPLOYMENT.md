@@ -77,13 +77,21 @@ nano .env.production
 # - TELEGRAM_BOT_TOKEN
 # - Другие переменные
 
-# 3. Запустите с PostgreSQL
+# 3. ВАЖНО: Создайте nginx.conf
+# Если планируете использовать nginx (рекомендуется для production):
+cp nginx.conf.example nginx.conf
+nano nginx.conf
+# Замените yourdomain.com на ваш реальный домен
+
+# Если НЕ используете nginx, закомментируйте nginx service в docker-compose.prod.yml
+
+# 4. Запустите с PostgreSQL
 docker-compose -f docker-compose.prod.yml --env-file .env.production up -d
 
-# 4. Проверьте health
+# 5. Проверьте health
 curl http://localhost:3000/api/health
 
-# 5. Проверьте логи
+# 6. Проверьте логи
 docker-compose -f docker-compose.prod.yml logs -f
 ```
 
