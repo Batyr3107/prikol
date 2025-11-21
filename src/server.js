@@ -419,6 +419,11 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   logger.info('Получен сигнал SIGINT, завершаем работу...');
+
+  // Очищаем rate limiter intervals
+  rateLimiter.cleanup();
+
+  // Закрываем соединение с БД
   await prisma.$disconnect();
   logger.success('Соединение с БД закрыто');
   process.exit(0);

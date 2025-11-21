@@ -26,6 +26,15 @@ class RateLimiter {
     }
   }
 
+  // Уничтожение rate limiter и очистка interval
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+      logger.info('[RateLimiter] Cleanup interval cleared');
+    }
+  }
+
   middleware() {
     return (req, res, next) => {
       // Получаем IP клиента
@@ -74,5 +83,11 @@ const voteLimiter = new RateLimiter(60000, 50); // 50 голосов в мину
 module.exports = {
   general: generalLimiter.middleware(),
   create: createLimiter.middleware(),
-  vote: voteLimiter.middleware()
+  vote: voteLimiter.middleware(),
+  // Функция для graceful shutdown
+  cleanup: () => {
+    generalLimiter.destroy();
+    createLimiter.destroy();
+    voteLimiter.destroy();
+  }
 };
