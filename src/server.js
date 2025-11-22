@@ -153,8 +153,15 @@ app.get('/api/rules/top/:limit', async (req, res) => {
 app.get('/api/rules/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Валидация ID
+    const ruleId = parseInt(id);
+    if (isNaN(ruleId)) {
+      return res.status(400).json({ error: 'ID правила должен быть числом' });
+    }
+
     const rule = await prisma.rule.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: ruleId },
       include: {
         author: {
           select: { displayName: true, username: true }
@@ -252,6 +259,12 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
     const { id } = req.params;
     const { userId, value, userName } = req.body;
 
+    // Валидация ID правила
+    const ruleId = parseInt(id);
+    if (isNaN(ruleId)) {
+      return res.status(400).json({ error: 'ID правила должен быть числом' });
+    }
+
     // Валидация
     if (!validateUserId(userId)) {
       return res.status(400).json({ error: 'Необходимо указать корректный userId' });
@@ -281,7 +294,7 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
       const existingVote = await tx.vote.findUnique({
         where: {
           ruleId_userId: {
-            ruleId: parseInt(id),
+            ruleId: ruleId,
             userId: user.id
           }
         }
@@ -298,7 +311,7 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
         // Создаем новый голос
         vote = await tx.vote.create({
           data: {
-            ruleId: parseInt(id),
+            ruleId: ruleId,
             userId: user.id,
             value: parseInt(value)
           }
@@ -307,7 +320,7 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
 
       // Получаем обновленный рейтинг
       const votes = await tx.vote.findMany({
-        where: { ruleId: parseInt(id) }
+        where: { ruleId: ruleId }
       });
       const rating = votes.reduce((sum, v) => sum + v.value, 0);
 
