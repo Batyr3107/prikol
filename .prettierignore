@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.db
+*.db-journal
+.env
+.env.*
+package-lock.json
+*.md
+AUDIT*.md
+FIXES*.md
+*.log
