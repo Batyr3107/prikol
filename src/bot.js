@@ -6,6 +6,7 @@ validateEnv();
 
 const TelegramBot = require('node-telegram-bot-api');
 const prisma = require('./db');
+const { disconnect: dbDisconnect } = require('./db');
 const { sanitizeText, validateRule, calculateRating, escapeHtml, countVotes } = require('./utils');
 const { VALIDATION } = require('./constants');
 const logger = require('./middleware/logger');
@@ -113,7 +114,10 @@ bot.onText(/\/list/, async (msg) => {
       return;
     }
 
-    bot.sendMessage(chatId, `📋 Последние ${rules.length} правил:\n\n(Нажмите на правило для голосования)`);
+    bot.sendMessage(
+      chatId,
+      `📋 Последние ${rules.length} правил:\n\n(Нажмите на правило для голосования)`
+    );
 
     for (const rule of rules) {
       const rating = calculateRating(rule.votes);
@@ -143,7 +147,7 @@ bot.onText(/\/top/, async (msg) => {
     }
 
     // Сортируем по рейтингу
-    const rulesWithRating = rules.map(rule => ({
+    const rulesWithRating = rules.map((rule) => ({
       ...rule,
       rating: calculateRating(rule.votes)
     }));
@@ -179,13 +183,19 @@ bot.on('message', async (msg) => {
     if (state.step === 'waiting_title') {
       // Сохраняем название с базовой валидацией
       if (text.length > VALIDATION.TITLE_MAX_LENGTH) {
-        bot.sendMessage(chatId, `❌ Название слишком длинное (максимум ${VALIDATION.TITLE_MAX_LENGTH} символов). Попробуйте снова с /new`);
+        bot.sendMessage(
+          chatId,
+          `❌ Название слишком длинное (максимум ${VALIDATION.TITLE_MAX_LENGTH} символов). Попробуйте снова с /new`
+        );
         delete userState[userId];
         return;
       }
       state.title = text;
       state.step = 'waiting_description';
-      bot.sendMessage(chatId, '✍️ Отлично! Теперь введите описание правила (или /skip чтобы пропустить):');
+      bot.sendMessage(
+        chatId,
+        '✍️ Отлично! Теперь введите описание правила (или /skip чтобы пропустить):'
+      );
     } else if (state.step === 'waiting_description') {
       // Сохраняем описание
       const description = text === '/skip' ? '' : text;
@@ -193,7 +203,10 @@ bot.on('message', async (msg) => {
       // Валидация правила
       const validation = validateRule(state.title, description);
       if (!validation.isValid) {
-        bot.sendMessage(chatId, `❌ Ошибка: ${validation.errors.join(', ')}\n\nПопробуйте снова с /new`);
+        bot.sendMessage(
+          chatId,
+          `❌ Ошибка: ${validation.errors.join(', ')}\n\nПопробуйте снова с /new`
+        );
         delete userState[userId];
         return;
       }
@@ -204,7 +217,10 @@ bot.on('message', async (msg) => {
       });
 
       if (!user) {
-        bot.sendMessage(chatId, '❌ Ошибка: пользователь не найден. Отправьте /start для регистрации.');
+        bot.sendMessage(
+          chatId,
+          '❌ Ошибка: пользователь не найден. Отправьте /start для регистрации.'
+        );
         delete userState[userId];
         return;
       }
@@ -235,7 +251,7 @@ bot.on('message', async (msg) => {
 
 // Обработка нажатий на кнопки
 bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
+  const _chatId = query.message.chat.id;
   const userId = query.from.id;
   const data = query.data;
 
@@ -398,7 +414,7 @@ async function gracefulShutdown(exitCode = 0) {
   }
 
   try {
-    await prisma.$disconnect();
+    await dbDisconnect();
     logger.success('Соединение с БД закрыто');
   } catch (error) {
     logger.error('Ошибка закрытия БД:', error);

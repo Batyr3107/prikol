@@ -1,66 +1,153 @@
-// Простой logger для приложения
+// Winston logger - производственный logger с ротацией файлов
+const winston = require('winston');
+const DailyRotateFile = require('winston-daily-rotate-file');
 
-const colors = {
-  reset: '\x1b[0m',
-  bright: '\x1b[1m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m'
+// Кастомные цвета для консоли
+const customColors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'blue',
+  http: 'magenta',
+  debug: 'cyan',
+  success: 'green'
 };
 
-class Logger {
-  getTimestamp() {
-    return new Date().toISOString();
-  }
+winston.addColors(customColors);
 
-  info(message, ...args) {
-    console.log(`${colors.blue}[INFO]${colors.reset} ${this.getTimestamp()} - ${message}`, ...args);
-  }
+// Формат для консоли (цветной)
+const consoleFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.colorize({ all: true }),
+  winston.format.printf((info) => {
+    const { timestamp, level, message, ...rest } = info;
+    let log = `${timestamp} [${level}]: ${message}`;
 
-  success(message, ...args) {
-    console.log(`${colors.green}[SUCCESS]${colors.reset} ${this.getTimestamp()} - ${message}`, ...args);
-  }
-
-  warn(message, ...args) {
-    console.warn(`${colors.yellow}[WARN]${colors.reset} ${this.getTimestamp()} - ${message}`, ...args);
-  }
-
-  error(message, error) {
-    console.error(`${colors.red}[ERROR]${colors.reset} ${this.getTimestamp()} - ${message}`);
-    if (error) {
-      console.error(error);
+    // Добавляем дополнительные поля если есть
+    if (Object.keys(rest).length > 0) {
+      log += ` ${JSON.stringify(rest, null, 2)}`;
     }
-  }
 
-  debug(message, ...args) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`${colors.cyan}[DEBUG]${colors.reset} ${this.getTimestamp()} - ${message}`, ...args);
-    }
-  }
+    return log;
+  })
+);
 
-  // Middleware для логирования HTTP запросов
-  requestLogger() {
-    return (req, res, next) => {
-      const start = Date.now();
-      const { method, url, ip } = req;
+// Формат для файлов (JSON)
+const fileFormat = winston.format.combine(
+  winston.format.timestamp(),
+  winston.format.errors({ stack: true }),
+  winston.format.json()
+);
 
-      // Логируем после завершения запроса
-      res.on('finish', () => {
-        const duration = Date.now() - start;
-        const { statusCode } = res;
-        const color = statusCode >= 400 ? colors.red : statusCode >= 300 ? colors.yellow : colors.green;
+// Transports
+const transports = [
+  // Console (всегда включен)
+  new winston.transports.Console({
+    format: consoleFormat
+  })
+];
 
-        console.log(
-          `${color}${method}${colors.reset} ${url} ${color}${statusCode}${colors.reset} - ${duration}ms - ${ip}`
-        );
-      });
+// Файловое логирование только в production или если явно указано
+if (process.env.NODE_ENV === 'production' || process.env.LOG_TO_FILE === 'true') {
+  // Все логи (info и выше)
+  transports.push(
+    new DailyRotateFile({
+      filename: 'logs/app-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '14d',
+      level: 'info',
+      format: fileFormat
+    })
+  );
 
-      next();
-    };
-  }
+  // Только ошибки
+  transports.push(
+    new DailyRotateFile({
+      filename: 'logs/error-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '30d',
+      level: 'error',
+      format: fileFormat
+    })
+  );
+
+  // HTTP логи (для production мониторинга)
+  transports.push(
+    new DailyRotateFile({
+      filename: 'logs/http-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '7d',
+      level: 'http',
+      format: fileFormat
+    })
+  );
 }
 
-module.exports = new Logger();
+// Создаем logger
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  levels: {
+    error: 0,
+    warn: 1,
+    info: 2,
+    http: 3,
+    success: 4,
+    debug: 5
+  },
+  transports,
+  // Обработка неперехваченных исключений
+  exceptionHandlers:
+    process.env.NODE_ENV === 'production'
+      ? [
+          new DailyRotateFile({
+            filename: 'logs/exceptions-%DATE%.log',
+            datePattern: 'YYYY-MM-DD',
+            maxSize: '20m',
+            maxFiles: '30d',
+            format: fileFormat
+          })
+        ]
+      : [],
+  // Обработка неперехваченных промисов
+  rejectionHandlers:
+    process.env.NODE_ENV === 'production'
+      ? [
+          new DailyRotateFile({
+            filename: 'logs/rejections-%DATE%.log',
+            datePattern: 'YYYY-MM-DD',
+            maxSize: '20m',
+            maxFiles: '30d',
+            format: fileFormat
+          })
+        ]
+      : []
+});
+
+// Middleware для логирования HTTP запросов
+logger.requestLogger = () => {
+  return (req, res, next) => {
+    const start = Date.now();
+    const { method, url, ip } = req;
+
+    // Логируем после завершения запроса
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const { statusCode } = res;
+      const level = statusCode >= 400 ? 'error' : statusCode >= 300 ? 'warn' : 'http';
+
+      logger.log(level, `${method} ${url} ${statusCode} - ${duration}ms - ${ip}`);
+    });
+
+    next();
+  };
+};
+
+// Добавляем кастомный метод success
+logger.success = (message, meta) => {
+  logger.log('success', message, meta);
+};
+
+// Экспортируем logger
+module.exports = logger;

@@ -8,10 +8,19 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const prisma = require('./db');
-const { sanitizeText, validateRule, validateVote, validateUserId, calculateRating } = require('./utils');
+const { disconnect: dbDisconnect } = require('./db');
+const {
+  sanitizeText,
+  validateRule,
+  validateVote,
+  validateUserId,
+  calculateRating
+} = require('./utils');
 const rateLimiter = require('./middleware/rateLimiter');
 const logger = require('./middleware/logger');
 const { HTTP, PAGINATION } = require('./constants');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,7 +35,7 @@ const corsOptions = {
 
     // В production проверяем allowed origins
     const allowedOrigins = process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
       : [];
 
     // Разрешаем запросы без origin (мобильные приложения, Postman и т.д.)
@@ -52,7 +61,10 @@ app.use(express.json({ limit: HTTP.REQUEST_SIZE_LIMIT })); // Защита от 
 // Security headers
 app.use((req, res, next) => {
   // Content Security Policy
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+  );
   // Предотвращает MIME type sniffing
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // Защита от clickjacking
@@ -67,6 +79,16 @@ app.use((req, res, next) => {
 app.use(logger.requestLogger());
 app.use(express.static(path.join(__dirname, '../public')));
 
+// Swagger UI для документации API
+app.use(
+  '/api-docs',
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: 'Rules Voting API Docs'
+  })
+);
+
 // Rate limiting для API
 app.use('/api', rateLimiter.general);
 
@@ -75,18 +97,25 @@ app.use('/api', rateLimiter.general);
 // Получить все правила с рейтингом (с пагинацией и поиском)
 app.get('/api/rules', async (req, res) => {
   try {
-    const { page = PAGINATION.DEFAULT_PAGE, limit = PAGINATION.DEFAULT_LIMIT, search = '', sortBy = 'rating' } = req.query;
+    const {
+      page = PAGINATION.DEFAULT_PAGE,
+      limit = PAGINATION.DEFAULT_LIMIT,
+      search = '',
+      sortBy = 'rating'
+    } = req.query;
     const pageNum = Math.max(1, parseInt(page) || PAGINATION.DEFAULT_PAGE);
-    const limitNum = Math.min(PAGINATION.MAX_LIMIT, Math.max(1, parseInt(limit) || PAGINATION.DEFAULT_LIMIT));
+    const limitNum = Math.min(
+      PAGINATION.MAX_LIMIT,
+      Math.max(1, parseInt(limit) || PAGINATION.DEFAULT_LIMIT)
+    );
     const skip = (pageNum - 1) * limitNum;
 
     // Условие поиска (SQLite LIKE is case-insensitive by default)
-    const searchCondition = search ? {
-      OR: [
-        { title: { contains: search } },
-        { description: { contains: search } }
-      ]
-    } : {};
+    const searchCondition = search
+      ? {
+          OR: [{ title: { contains: search } }, { description: { contains: search } }]
+        }
+      : {};
 
     // Получаем общее количество
     const total = await prisma.rule.count({ where: searchCondition });
@@ -107,7 +136,7 @@ app.get('/api/rules', async (req, res) => {
     });
 
     // Подсчитываем рейтинг для каждого правила
-    const rulesWithRating = rules.map(rule => {
+    const rulesWithRating = rules.map((rule) => {
       const rating = calculateRating(rule.votes);
       const votesCount = rule.votes.length;
       return {
@@ -166,7 +195,7 @@ app.get('/api/rules/top/:limit', async (req, res) => {
     `;
 
     // Форматируем результат
-    const formattedRules = topRules.map(rule => ({
+    const formattedRules = topRules.map((rule) => ({
       id: rule.id,
       title: rule.title,
       description: rule.description,
@@ -334,16 +363,15 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
         }
       });
 
-      let vote;
       if (existingVote) {
         // Обновляем существующий голос
-        vote = await tx.vote.update({
+        await tx.vote.update({
           where: { id: existingVote.id },
           data: { value: parseInt(value) }
         });
       } else {
         // Создаем новый голос
-        vote = await tx.vote.create({
+        await tx.vote.create({
           data: {
             ruleId: ruleId,
             userId: user.id,
@@ -415,14 +443,17 @@ app.get('/api/stats', async (req, res) => {
       totalVotes: Number(stats.totalVotes),
       positiveVotes: Number(voteStats.positiveVotes || 0),
       negativeVotes: Number(voteStats.negativeVotes || 0),
-      topRule: top ? {
-        id: top.id,
-        title: top.title,
-        rating: Number(top.rating)
-      } : null,
-      avgVotesPerRule: stats.totalRules > 0
-        ? (Number(stats.totalVotes) / Number(stats.totalRules)).toFixed(2)
-        : '0.00'
+      topRule: top
+        ? {
+            id: top.id,
+            title: top.title,
+            rating: Number(top.rating)
+          }
+        : null,
+      avgVotesPerRule:
+        stats.totalRules > 0
+          ? (Number(stats.totalVotes) / Number(stats.totalRules)).toFixed(2)
+          : '0.00'
     });
   } catch (error) {
     logger.error('Error fetching stats:', error);
@@ -444,7 +475,7 @@ app.use((req, res) => {
 });
 
 // Global error handler
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   logger.error('Unhandled error:', err);
 
   // Не показываем детали ошибки в production
@@ -461,6 +492,7 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, () => {
   logger.success(`🚀 Сервер запущен на http://localhost:${PORT}`);
   logger.info(`📊 API доступен на http://localhost:${PORT}/api`);
+  logger.info(`📚 API документация: http://localhost:${PORT}/api-docs`);
   printConfig();
 });
 
@@ -478,7 +510,7 @@ async function gracefulShutdown(exitCode = 0) {
 
   // Закрываем соединение с БД
   try {
-    await prisma.$disconnect();
+    await dbDisconnect();
     logger.success('Соединение с БД закрыто');
   } catch (error) {
     logger.error('Ошибка при закрытии БД:', error);
