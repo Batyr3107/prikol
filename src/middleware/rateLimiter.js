@@ -1,14 +1,39 @@
 // Простой rate limiter без внешних зависимостей
 const logger = require('./logger');
+const { RATE_LIMITS, CLEANUP } = require('../constants');
+
+/**
+ * Получить IP клиента с учетом proxy
+ * ВНИМАНИЕ: Использовать только за доверенным reverse proxy (nginx, traefik)
+ */
+function getClientIp(req) {
+  // Если приложение за proxy, доверяем заголовкам
+  if (process.env.TRUST_PROXY === 'true') {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+      // Берем первый IP (клиента), остальные - промежуточные proxy
+      return forwarded.split(',')[0].trim();
+    }
+
+    const realIp = req.headers['x-real-ip'];
+    if (realIp) return realIp.trim();
+  }
+
+  // Fallback на стандартные методы
+  return req.ip ||
+         req.connection?.remoteAddress ||
+         req.socket?.remoteAddress ||
+         'unknown';
+}
 
 class RateLimiter {
-  constructor(windowMs = 60000, max = 100) {
+  constructor(windowMs = RATE_LIMITS.GENERAL_WINDOW, max = RATE_LIMITS.GENERAL_MAX) {
     this.windowMs = windowMs; // Временное окно в миллисекундах
     this.max = max; // Максимум запросов в окне
     this.clients = new Map();
 
-    // Автоматическая очистка каждые 5 минут
-    this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    // Автоматическая очистка
+    this.cleanupInterval = setInterval(() => this.cleanup(), CLEANUP.RATE_LIMITER_INTERVAL);
   }
 
   // Очистка старых записей
@@ -37,8 +62,8 @@ class RateLimiter {
 
   middleware() {
     return (req, res, next) => {
-      // Получаем IP клиента
-      const key = req.ip || req.connection.remoteAddress || 'unknown';
+      // Получаем IP клиента с учетом proxy
+      const key = getClientIp(req);
       const now = Date.now();
 
       let clientData = this.clients.get(key);
@@ -76,9 +101,9 @@ class RateLimiter {
 }
 
 // Создаем лимитеры для разных типов запросов
-const generalLimiter = new RateLimiter(60000, 100); // 100 запросов в минуту
-const createLimiter = new RateLimiter(60000, 10); // 10 создании правил в минуту
-const voteLimiter = new RateLimiter(60000, 50); // 50 голосов в минуту
+const generalLimiter = new RateLimiter(RATE_LIMITS.GENERAL_WINDOW, RATE_LIMITS.GENERAL_MAX);
+const createLimiter = new RateLimiter(RATE_LIMITS.CREATE_WINDOW, RATE_LIMITS.CREATE_MAX);
+const voteLimiter = new RateLimiter(RATE_LIMITS.VOTE_WINDOW, RATE_LIMITS.VOTE_MAX);
 
 module.exports = {
   general: generalLimiter.middleware(),

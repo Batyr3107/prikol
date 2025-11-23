@@ -6,7 +6,8 @@ validateEnv();
 
 const TelegramBot = require('node-telegram-bot-api');
 const prisma = require('./db');
-const { sanitizeText, validateRule } = require('./utils');
+const { sanitizeText, validateRule, calculateRating, escapeHtml, countVotes } = require('./utils');
+const { VALIDATION } = require('./constants');
 const logger = require('./middleware/logger');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -115,7 +116,7 @@ bot.onText(/\/list/, async (msg) => {
     bot.sendMessage(chatId, `📋 Последние ${rules.length} правил:\n\n(Нажмите на правило для голосования)`);
 
     for (const rule of rules) {
-      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
+      const rating = calculateRating(rule.votes);
       await sendRuleMessage(chatId, rule, rating);
     }
   } catch (error) {
@@ -144,7 +145,7 @@ bot.onText(/\/top/, async (msg) => {
     // Сортируем по рейтингу
     const rulesWithRating = rules.map(rule => ({
       ...rule,
-      rating: rule.votes.reduce((sum, vote) => sum + vote.value, 0)
+      rating: calculateRating(rule.votes)
     }));
 
     rulesWithRating.sort((a, b) => b.rating - a.rating);
@@ -177,8 +178,8 @@ bot.on('message', async (msg) => {
   try {
     if (state.step === 'waiting_title') {
       // Сохраняем название с базовой валидацией
-      if (text.length > 200) {
-        bot.sendMessage(chatId, '❌ Название слишком длинное (максимум 200 символов). Попробуйте снова с /new');
+      if (text.length > VALIDATION.TITLE_MAX_LENGTH) {
+        bot.sendMessage(chatId, `❌ Название слишком длинное (максимум ${VALIDATION.TITLE_MAX_LENGTH} символов). Попробуйте снова с /new`);
         delete userState[userId];
         return;
       }
@@ -287,7 +288,7 @@ bot.on('callback_query', async (query) => {
         const votes = await tx.vote.findMany({
           where: { ruleId: parseInt(ruleId) }
         });
-        const rating = votes.reduce((sum, v) => sum + v.value, 0);
+        const rating = calculateRating(votes);
 
         // Получаем правило для обновления сообщения
         const rule = await tx.rule.findUnique({
@@ -383,26 +384,49 @@ ${rule.description ? safeDescription : '<i>Без описания</i>'}
   });
 }
 
-// Подсчет голосов
-function countVotes(votes, value) {
-  if (!votes) return 0;
-  return votes.filter(v => v.value === value).length;
+// Функции countVotes и escapeHtml импортированы из utils.js
+
+// Graceful shutdown функция
+async function gracefulShutdown(exitCode = 0) {
+  logger.info('\n🛑 Остановка бота...');
+
+  try {
+    await bot.stopPolling();
+    logger.info('Polling остановлен');
+  } catch (error) {
+    logger.error('Ошибка остановки polling:', error);
+  }
+
+  try {
+    await prisma.$disconnect();
+    logger.success('Соединение с БД закрыто');
+  } catch (error) {
+    logger.error('Ошибка закрытия БД:', error);
+  }
+
+  logger.success('Бот остановлен');
+  process.exit(exitCode);
 }
 
-// Экранирование HTML для Telegram
-function escapeHtml(text) {
-  if (!text) return '';
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// Обработчики ошибок процесса
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise);
+  logger.error('Reason:', reason);
+  gracefulShutdown(1);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  gracefulShutdown(1);
+});
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-  logger.info('\n🛑 Остановка бота...');
-  await bot.stopPolling();
-  await prisma.$disconnect();
-  logger.success('Бот остановлен');
-  process.exit(0);
+process.on('SIGINT', () => {
+  logger.info('Получен сигнал SIGINT');
+  gracefulShutdown(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Получен сигнал SIGTERM');
+  gracefulShutdown(0);
 });

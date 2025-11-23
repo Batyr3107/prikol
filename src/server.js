@@ -8,16 +8,46 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const prisma = require('./db');
-const { sanitizeText, validateRule, validateVote, validateUserId } = require('./utils');
+const { sanitizeText, validateRule, validateVote, validateUserId, calculateRating } = require('./utils');
 const rateLimiter = require('./middleware/rateLimiter');
 const logger = require('./middleware/logger');
+const { HTTP, PAGINATION } = require('./constants');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS configuration
+const corsOptions = {
+  origin: (origin, callback) => {
+    // В development разрешаем все origins
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
+    // В production проверяем allowed origins
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+      : [];
+
+    // Разрешаем запросы без origin (мобильные приложения, Postman и т.д.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS: Blocked origin ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400 // 24 часа кэширования preflight
+};
+
 // Middleware
-app.use(cors()); // В production рекомендуется ограничить: cors({ origin: ['https://yourdomain.com'] })
-app.use(express.json({ limit: '1mb' })); // Защита от слишком больших запросов (DoS)
+app.use(cors(corsOptions));
+app.use(express.json({ limit: HTTP.REQUEST_SIZE_LIMIT })); // Защита от слишком больших запросов (DoS)
 
 // Security headers
 app.use((req, res, next) => {
@@ -45,9 +75,9 @@ app.use('/api', rateLimiter.general);
 // Получить все правила с рейтингом (с пагинацией и поиском)
 app.get('/api/rules', async (req, res) => {
   try {
-    const { page = 1, limit = 50, search = '', sortBy = 'rating' } = req.query;
-    const pageNum = Math.max(1, parseInt(page) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
+    const { page = PAGINATION.DEFAULT_PAGE, limit = PAGINATION.DEFAULT_LIMIT, search = '', sortBy = 'rating' } = req.query;
+    const pageNum = Math.max(1, parseInt(page) || PAGINATION.DEFAULT_PAGE);
+    const limitNum = Math.min(PAGINATION.MAX_LIMIT, Math.max(1, parseInt(limit) || PAGINATION.DEFAULT_LIMIT));
     const skip = (pageNum - 1) * limitNum;
 
     // Условие поиска (SQLite LIKE is case-insensitive by default)
@@ -78,7 +108,7 @@ app.get('/api/rules', async (req, res) => {
 
     // Подсчитываем рейтинг для каждого правила
     const rulesWithRating = rules.map(rule => {
-      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
+      const rating = calculateRating(rule.votes);
       const votesCount = rule.votes.length;
       return {
         id: rule.id,
@@ -114,35 +144,39 @@ app.get('/api/rules', async (req, res) => {
 // Получить топ правила (ПЕРЕД /:id чтобы не конфликтовать!)
 app.get('/api/rules/top/:limit', async (req, res) => {
   try {
-    const limit = Math.min(100, Math.max(1, parseInt(req.params.limit) || 10));
+    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(1, parseInt(req.params.limit) || 10));
 
-    const rules = await prisma.rule.findMany({
-      include: {
-        author: {
-          select: { displayName: true, username: true }
-        },
-        votes: {
-          select: { value: true }
-        }
-      }
-    });
+    // Оптимизированный запрос с агрегацией на уровне БД
+    const topRules = await prisma.$queryRaw`
+      SELECT
+        r.id,
+        r.title,
+        r.description,
+        r.createdAt,
+        u.displayName,
+        u.username,
+        COALESCE(SUM(v.value), 0) as rating,
+        COUNT(v.id) as votesCount
+      FROM Rule r
+      LEFT JOIN User u ON r.authorId = u.id
+      LEFT JOIN Vote v ON r.id = v.ruleId
+      GROUP BY r.id
+      ORDER BY rating DESC
+      LIMIT ${limit}
+    `;
 
-    const rulesWithRating = rules.map(rule => {
-      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
-      return {
-        id: rule.id,
-        title: rule.title,
-        description: rule.description,
-        author: rule.author.displayName || rule.author.username || 'Аноним',
-        createdAt: rule.createdAt,
-        rating,
-        votesCount: rule.votes.length
-      };
-    });
+    // Форматируем результат
+    const formattedRules = topRules.map(rule => ({
+      id: rule.id,
+      title: rule.title,
+      description: rule.description,
+      author: rule.displayName || rule.username || 'Аноним',
+      createdAt: new Date(rule.createdAt),
+      rating: Number(rule.rating),
+      votesCount: Number(rule.votesCount)
+    }));
 
-    rulesWithRating.sort((a, b) => b.rating - a.rating);
-
-    res.json(rulesWithRating.slice(0, limit));
+    res.json(formattedRules);
   } catch (error) {
     logger.error('Error fetching top rules:', error);
     res.status(500).json({ error: 'Ошибка при получении топ правил' });
@@ -176,7 +210,7 @@ app.get('/api/rules/:id', async (req, res) => {
       return res.status(404).json({ error: 'Правило не найдено' });
     }
 
-    const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
+    const rating = calculateRating(rule.votes);
 
     res.json({
       id: rule.id,
@@ -341,53 +375,54 @@ app.post('/api/rules/:id/vote', rateLimiter.vote, async (req, res) => {
 // Статистика
 app.get('/api/stats', async (req, res) => {
   try {
-    const [
-      totalRules,
-      totalUsers,
-      totalVotes,
-      rulesWithVotes
-    ] = await Promise.all([
-      prisma.rule.count(),
-      prisma.user.count(),
-      prisma.vote.count(),
-      prisma.rule.findMany({
-        include: {
-          votes: {
-            select: { value: true }
-          }
-        }
-      })
+    // Оптимизированный запрос статистики с агрегацией в БД
+    const [counts, votes, topRule] = await Promise.all([
+      // Подсчет правил и пользователей
+      prisma.$queryRaw`
+        SELECT
+          (SELECT COUNT(*) FROM Rule) as totalRules,
+          (SELECT COUNT(*) FROM User) as totalUsers,
+          (SELECT COUNT(*) FROM Vote) as totalVotes
+      `,
+      // Подсчет положительных/отрицательных голосов
+      prisma.$queryRaw`
+        SELECT
+          SUM(CASE WHEN value = 1 THEN 1 ELSE 0 END) as positiveVotes,
+          SUM(CASE WHEN value = -1 THEN 1 ELSE 0 END) as negativeVotes
+        FROM Vote
+      `,
+      // Топ правило
+      prisma.$queryRaw`
+        SELECT
+          r.id,
+          r.title,
+          COALESCE(SUM(v.value), 0) as rating
+        FROM Rule r
+        LEFT JOIN Vote v ON r.id = v.ruleId
+        GROUP BY r.id
+        ORDER BY rating DESC
+        LIMIT 1
+      `
     ]);
 
-    // Подсчитываем статистику голосов
-    let positiveVotes = 0;
-    let negativeVotes = 0;
-    let topRating = 0;
-    let topRule = null;
-
-    rulesWithVotes.forEach(rule => {
-      const rating = rule.votes.reduce((sum, vote) => sum + vote.value, 0);
-      positiveVotes += rule.votes.filter(v => v.value === 1).length;
-      negativeVotes += rule.votes.filter(v => v.value === -1).length;
-
-      if (rating > topRating) {
-        topRating = rating;
-        topRule = {
-          id: rule.id,
-          title: rule.title,
-          rating
-        };
-      }
-    });
+    const stats = counts[0];
+    const voteStats = votes[0];
+    const top = topRule[0] || null;
 
     res.json({
-      totalRules,
-      totalUsers,
-      totalVotes,
-      positiveVotes,
-      negativeVotes,
-      topRule,
-      avgVotesPerRule: totalRules > 0 ? (totalVotes / totalRules).toFixed(2) : 0
+      totalRules: Number(stats.totalRules),
+      totalUsers: Number(stats.totalUsers),
+      totalVotes: Number(stats.totalVotes),
+      positiveVotes: Number(voteStats.positiveVotes || 0),
+      negativeVotes: Number(voteStats.negativeVotes || 0),
+      topRule: top ? {
+        id: top.id,
+        title: top.title,
+        rating: Number(top.rating)
+      } : null,
+      avgVotesPerRule: stats.totalRules > 0
+        ? (Number(stats.totalVotes) / Number(stats.totalRules)).toFixed(2)
+        : '0.00'
     });
   } catch (error) {
     logger.error('Error fetching stats:', error);
@@ -423,21 +458,57 @@ app.use((err, req, res, next) => {
 });
 
 // Запуск сервера
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.success(`🚀 Сервер запущен на http://localhost:${PORT}`);
   logger.info(`📊 API доступен на http://localhost:${PORT}/api`);
   printConfig();
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  logger.info('Получен сигнал SIGINT, завершаем работу...');
+// Graceful shutdown функция
+async function gracefulShutdown(exitCode = 0) {
+  logger.info('Начинаем graceful shutdown...');
+
+  // Останавливаем прием новых запросов
+  server.close(() => {
+    logger.info('HTTP сервер закрыт');
+  });
 
   // Очищаем rate limiter intervals
   rateLimiter.cleanup();
 
   // Закрываем соединение с БД
-  await prisma.$disconnect();
-  logger.success('Соединение с БД закрыто');
-  process.exit(0);
+  try {
+    await prisma.$disconnect();
+    logger.success('Соединение с БД закрыто');
+  } catch (error) {
+    logger.error('Ошибка при закрытии БД:', error);
+  }
+
+  logger.success('Shutdown завершен');
+  process.exit(exitCode);
+}
+
+// Обработчики ошибок процесса
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise);
+  logger.error('Reason:', reason);
+  // В production желательно отправлять в систему мониторинга (Sentry, DataDog)
+  gracefulShutdown(1);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  // В production желательно отправлять в систему мониторинга
+  gracefulShutdown(1);
+});
+
+// Graceful shutdown при SIGINT и SIGTERM
+process.on('SIGINT', () => {
+  logger.info('Получен сигнал SIGINT');
+  gracefulShutdown(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Получен сигнал SIGTERM');
+  gracefulShutdown(0);
 });

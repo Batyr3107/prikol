@@ -28,12 +28,13 @@ model Rule {
   title         String
   description   String?
   authorId      Int
-  author        User     @relation(fields: [authorId], references: [id])
+  author        User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   createdAt     DateTime @default(now())
 
   votes         Vote[]
 
   @@index([createdAt])
+  @@index([authorId])
 }
 
 // Голос
@@ -42,10 +43,11 @@ model Vote {
   ruleId    Int
   rule      Rule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   value     Int      // +1 за, -1 против
   createdAt DateTime @default(now())
 
   @@unique([ruleId, userId]) // Один пользователь - один голос за правило
   @@index([ruleId])
+  @@index([userId])
 }
